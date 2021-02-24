@@ -1,12 +1,16 @@
 #include <array>
 #include <string>
+#include <memory>
 
 #define DIRECTINPUT_VERSION 0x0800
 #include <dinput.h>
-
 #include <windows.h>
 
+#include "utility/Scan.hpp"
+#include "utility/Patch.hpp"
+
 HMODULE g_dinput = 0;
+std::unique_ptr<Patch> g_patch{};
 
 extern "C" {
     // DirectInput8Create wrapper for dinput8.dll
@@ -22,34 +26,30 @@ void failed() {
 }
 
 void patch_shadercache() {
-    const auto game = (uintptr_t)GetModuleHandle(0);
+    const auto game = GetModuleHandle(0);
+    
 
-    const auto patch_jmp_loc = game + 0xE6E1E2; // Exits CreateShaderCache early and reports a failure (return 0)
-    const auto patch_replace_loc = game + 0xE6E24E; // Stops the game from crashing because of some D3D func failure (GetCachedBlob)
-
-    std::array<uint8_t, 3> required_bytes_jmp{ 0x0F, 0x57, 0xC0 }; // xorps xmm0, xmm0
-    std::array<uint8_t, 3> required_bytes_replace{ 0x48, 0x8B, 0x0D }; // mov rcx, cs:DEADBEEF
+    // Look for "shadercache.bin"
+    const auto patch_jmp_loc = utility::scan(game, "0F 57 C0 49 8B CC F3 0F ? ? ? E8"); // Exits CreateShaderCache early and reports a failure (return 0)
 
     // Make sure the bytes match because im too lazy to add pattern scanning
-    if (memcmp((void*)patch_jmp_loc, required_bytes_jmp.data(), required_bytes_jmp.size()) != 0) {
+    if (!patch_jmp_loc) {
         MessageBox(0, "1. Current HITMAN3FIX incompatible with this version of the game.", "Error", 0);
         return;
     }
 
-    if (memcmp((void*)patch_replace_loc, required_bytes_replace.data(), required_bytes_replace.size()) != 0) {
+
+    const auto patch_replace_loc = utility::scan(*patch_jmp_loc, 0x200, "48 8B 0D ? ? ? ?"); // Stops the game from crashing because of some D3D func failure (GetCachedBlob)
+
+    if (!patch_replace_loc) {
         MessageBox(0, "2. Current HITMAN3FIX incompatible with this version of the game.", "Error", 0);
         return;
     }
 
-    std::array<uint8_t, 5> new_bytes{ 0xE9, 0x00, 0x00, 0x00, 0x00 };
-    *(int32_t*)&new_bytes[1] = (int32_t)(patch_jmp_loc - (patch_replace_loc + 5));
+    std::vector<uint8_t> new_bytes{ 0xE9, 0x00, 0x00, 0x00, 0x00 };
+    *(int32_t*)&new_bytes[1] = (int32_t)(*patch_jmp_loc - (*patch_replace_loc + 5));
 
-    DWORD old_protect{ 0 };
-    VirtualProtect((void*)patch_replace_loc, new_bytes.size(), PAGE_EXECUTE_READWRITE, &old_protect);
-
-    memcpy((void*)patch_replace_loc, new_bytes.data(), new_bytes.size());
-
-    VirtualProtect((void*)patch_replace_loc, new_bytes.size(), old_protect, &old_protect);
+    g_patch = Patch::create(*patch_replace_loc, new_bytes);
 
     MessageBeep(0);
 }
