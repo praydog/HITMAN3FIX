@@ -20,6 +20,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    
+    - uses: actions/upload-artifact@v2
+      with:
+        name: dinput8.dll
+        path: build/bin/dinput8.dll
 
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
